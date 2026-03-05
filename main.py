@@ -1,35 +1,29 @@
 import asyncio
 import logging
 from datetime import datetime
-from asyncua import Client, ua, Node
+from asyncua import Client, Node
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from config.ws import ConnectionManager
-
 from contextlib import asynccontextmanager
-
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s",
 )
-
-# Silenciar logs internos de asyncua
 logging.getLogger("asyncua").setLevel(logging.WARNING)
-logging.getLogger("asyncua.common.subscription").setLevel(logging.WARNING)
-logging.getLogger("asyncua.client.ua_client.UaClient").setLevel(logging.WARNING)
 
-
-URL = "opc.tcp://127.0.0.1:4840/alarma/simulador/"
-NAMESPACE_URI = "urn:simulador:opcua:alarma"
+# ── Configuración OPC-UA ────────────────────────────────────────────
+ENDPOINT = "opc.tcp://localhost:4840/general/simulador/"
+NODE_NAME = "Nodo1"
 PUBLISHING_INTERVAL_MS = 100
 SAMPLING_INTERVAL_MS = 0.0
 QUEUE_MAXSIZE = 500
 
-# Instancia compartida del gestor de conexiones WebSocket
 ws_manager = ConnectionManager()
 
 
-class UaExpertStyleHandler:
+# ── Handler de suscripción ──────────────────────────────────────────
+class DataChangeHandler:
 
     def __init__(self, queue: asyncio.Queue, node_labels: dict[str, str]):
         self.queue = queue
@@ -40,15 +34,12 @@ class UaExpertStyleHandler:
             nodeid = node.nodeid.to_string()
             tag = self.node_labels.get(nodeid, nodeid)
 
-            source_ts = None
-            server_ts = None
-            status = None
-
+            source_ts = server_ts = status = None
             try:
-                mi_val = data.monitored_item.Value
-                source_ts = mi_val.SourceTimestamp
-                server_ts = mi_val.ServerTimestamp
-                status = mi_val.StatusCode
+                mv = data.monitored_item.Value
+                source_ts = mv.SourceTimestamp
+                server_ts = mv.ServerTimestamp
+                status = mv.StatusCode
             except Exception:
                 pass
 
@@ -65,139 +56,94 @@ class UaExpertStyleHandler:
             try:
                 self.queue.put_nowait(payload)
             except asyncio.QueueFull:
-                # descarta el más viejo y conserva el último
                 try:
-                    _ = self.queue.get_nowait()
+                    self.queue.get_nowait()
                 except asyncio.QueueEmpty:
                     pass
                 try:
                     self.queue.put_nowait(payload)
                 except asyncio.QueueFull:
                     pass
-
         except Exception:
             logging.exception("Error en datachange_notification")
 
     def status_change_notification(self, status):
-        logging.warning("Estado de subscription: %s", status)
+        logging.warning("Estado de suscripción: %s", status)
 
 
-async def find_alarma_folder(client, ns_idx: int):
-    return client.get_node(ua.NodeId(1005, ns_idx))
+# ── Búsqueda del nodo carpeta y descubrimiento de hijos ─────────────
+async def find_folder_node(client: Client, name: str) -> Node:
+    """Busca un nodo hijo directo de Objects por browse-name."""
+    for child in await client.nodes.objects.get_children():
+        bn = await child.read_browse_name()
+        if bn.Name == name:
+            return child
+    raise RuntimeError(f"Nodo '{name}' no encontrado en Objects")
 
 
-async def discover_alarm_nodes(client: Client):
-    ns_idx = await client.get_namespace_index(NAMESPACE_URI)
-    alarma_folder = await find_alarma_folder(client, ns_idx)
-
-    children = await alarma_folder.get_children()
-
-    node_labels = {}
-    nodes = []
-
+async def discover_children(folder: Node) -> tuple[list[Node], dict[str, str]]:
+    """Devuelve las variables hijas de un nodo carpeta y un dict nodeid->label."""
+    children = await folder.get_children()
+    nodes: list[Node] = []
+    labels: dict[str, str] = {}
     for child in children:
         try:
-            browse_name = await child.read_browse_name()
-            display_name = await child.read_display_name()
-
-            # Ejemplo esperado: [0], [1], [2], ...
-            label = display_name.Text if display_name and display_name.Text else browse_name.Name
-            node_labels[child.nodeid.to_string()] = label
+            dn = await child.read_display_name()
+            bn = await child.read_browse_name()
+            label = dn.Text if dn and dn.Text else bn.Name
+            labels[child.nodeid.to_string()] = label
             nodes.append(child)
         except Exception:
-            logging.exception("No se pudo inspeccionar un hijo de Alarma")
-
-    # Ordenamos por label si parecen [0], [1], [2]...
-    def sort_key(node: Node):
-        label = node_labels.get(node.nodeid.to_string(), "")
-        if label.startswith("[") and label.endswith("]"):
-            try:
-                return int(label[1:-1])
-            except ValueError:
-                pass
-        return label
-
-    nodes.sort(key=sort_key)
-
-    return ns_idx, alarma_folder, nodes, node_labels
+            logging.warning("No se pudo inspeccionar hijo %s", child.nodeid)
+    return nodes, labels
 
 
-async def snapshot_read(client: Client, nodes: list[Node], node_labels: dict[str, str]):
-    values = await client.read_values(nodes)
-    snapshot = []
-    for node, value in zip(nodes, values):
-        snapshot.append({
-            "tag": node_labels.get(node.nodeid.to_string(), node.nodeid.to_string()),
-            "nodeid": node.nodeid.to_string(),
-            "value": value,
-        })
-    return snapshot
-
-
-async def queue_worker(queue: asyncio.Queue, ws_manager: ConnectionManager):
+# ── Worker que despacha cambios por WebSocket ───────────────────────
+async def queue_worker(queue: asyncio.Queue, mgr: ConnectionManager):
     while True:
         item = await queue.get()
         try:
-            logging.info(
-                "Cambio | %s | valor=%s",
-                item["tag"],
-                item["value"],
-            )
-            await ws_manager.broadcast_json(item)
+            logging.info("Cambio | %s | valor=%s", item["tag"], item["value"])
+            await mgr.broadcast_json(item)
         finally:
             queue.task_done()
 
 
-async def run_client(ws_manager: ConnectionManager):
-    queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+# ── Cliente OPC-UA con reconnect automático ─────────────────────────
+async def run_client(mgr: ConnectionManager):
+    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
 
     while True:
-        worker_task = None
-        subscription = None
-
+        worker_task = subscription = None
         try:
-            logging.info("Conectando a %s", URL)
+            logging.info("Conectando a %s …", ENDPOINT)
 
-            async with Client(url=URL, timeout=4) as client:
-                ns_idx, alarma_folder, nodes, node_labels = await discover_alarm_nodes(client)
+            async with Client(url=ENDPOINT, timeout=4) as client:
+                folder = await find_folder_node(client, NODE_NAME)
+                logging.info("Carpeta encontrada: %s (%s)", NODE_NAME, folder.nodeid)
 
-                logging.info("Namespace index: %s", ns_idx)
-                logging.info("Nodo Alarma: %s", alarma_folder.nodeid.to_string())
-                logging.info("Nodos descubiertos en Alarma: %s", len(nodes))
-
+                nodes, node_labels = await discover_children(folder)
                 if not nodes:
-                    raise RuntimeError("No se encontraron nodos debajo de Alarma")
+                    raise RuntimeError(f"No se encontraron variables dentro de '{NODE_NAME}'")
+                logging.info("Variables descubiertas en '%s': %d", NODE_NAME, len(nodes))
 
-                # Si el server soporta RegisterNodes, puede optimizar accesos repetidos.
-                try:
-                    nodes = await client.register_nodes(nodes)
-                    logging.info("RegisterNodes OK")
-                except Exception as e:
-                    logging.warning("RegisterNodes no disponible o falló: %s", e)
+                # Lectura inicial
+                values = await client.read_values(nodes)
+                for n, v in zip(nodes, values):
+                    logging.info("  %s = %s", node_labels[n.nodeid.to_string()], v)
 
-                # Snapshot inicial
-                snapshot = await snapshot_read(client, nodes, node_labels)
-                logging.info("Snapshot inicial:")
-                for item in snapshot:
-                    logging.info("  %s = %s", item["tag"], item["value"])
+                worker_task = asyncio.create_task(queue_worker(queue, mgr))
 
-                #worker_task = asyncio.create_task(queue_worker(queue))
-                worker_task = asyncio.create_task(queue_worker(queue, ws_manager))
-
-                handler = UaExpertStyleHandler(queue, node_labels)
+                handler = DataChangeHandler(queue, node_labels)
                 subscription = await client.create_subscription(
-                    PUBLISHING_INTERVAL_MS,
-                    handler
+                    PUBLISHING_INTERVAL_MS, handler
                 )
-
-                handles = await subscription.subscribe_data_change(
+                await subscription.subscribe_data_change(
                     nodes,
                     queuesize=1,
-                    sampling_interval=SAMPLING_INTERVAL_MS
+                    sampling_interval=SAMPLING_INTERVAL_MS,
                 )
-
-                logging.info("Subscription creada. MonitoredItems: %s", len(handles))
-                logging.info("Esperando cambios...")
+                logging.info("Suscripción activa en '%s'. Esperando cambios…", NODE_NAME)
 
                 while True:
                     await client.check_connection()
@@ -205,18 +151,17 @@ async def run_client(ws_manager: ConnectionManager):
 
         except asyncio.CancelledError:
             raise
-        except Exception as e:
-            logging.exception("Cliente desconectado o con error: %s", e)
-            logging.info("Reintentando en 3 segundos...")
+        except Exception as exc:
+            logging.exception("Desconectado/error: %s", exc)
+            logging.info("Reintentando en 3 s…")
             await asyncio.sleep(3)
         finally:
-            if subscription is not None:
+            if subscription:
                 try:
                     await subscription.delete()
                 except Exception:
                     pass
-
-            if worker_task is not None:
+            if worker_task:
                 worker_task.cancel()
                 try:
                     await worker_task
@@ -224,38 +169,28 @@ async def run_client(ws_manager: ConnectionManager):
                     pass
 
 
-
+# ── FastAPI ─────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    opc_task = asyncio.create_task(run_client(ws_manager))
+    task = asyncio.create_task(run_client(ws_manager))
     try:
         yield
     finally:
-        opc_task.cancel()
+        task.cancel()
         try:
-            await opc_task
+            await task
         except asyncio.CancelledError:
             pass
 
 app = FastAPI(lifespan=lifespan)
 
+
 @app.websocket("/ws/alarmas")
-async def websocket_alarmas(websocket: WebSocket):
-    await ws_manager.connect(websocket)
+async def websocket_alarmas(ws: WebSocket):
+    await ws_manager.connect(ws)
     try:
         while True:
-            # si querés, podés leer mensajes del cliente
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
-    except Exception:
-        ws_manager.disconnect(websocket)
-
-"""
-if __name__ == "__main__":
-    try:
-        asyncio.run(run_client())
-    except KeyboardInterrupt:
-        print("Cliente finalizado por usuario.")
-"""
+            await ws.receive_text()
+    except (WebSocketDisconnect, Exception):
+        ws_manager.disconnect(ws)
 
