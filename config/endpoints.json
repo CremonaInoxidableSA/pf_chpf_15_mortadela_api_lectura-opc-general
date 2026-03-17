@@ -1,0 +1,18 @@
+{
+  "opc_endpoint": "opc.tcp://localhost:4840/general/simulador/",
+  "publishing_interval_ms": 100,
+  "sampling_interval_ms": 0.0,
+  "queue_maxsize": 500,
+  "browse_depth": 3,
+  "endpoints": [
+    {
+      "path": "/ws/correcciones",
+      "source_ws": "ws://localhost:8005/ws/correcciones",
+      "opc_objects": ["hBusqueda", "hGuardado","hBusqueda1", "hBusqueda2", "hBusqueda3", "hBusqueda4", "hBusqueda5", "hBusqueda6", "hBusqueda7", "hBusqueda8", "hBusqueda9", "hBusqueda10", "hBusqueda11", "hBusqueda12", "hGuardado1", "hGuardado2", "hGuardado3", "hGuardado4", "hGuardado5", "hGuardado6", "hGuardado7", "hGuardado8", "hGuardado9", "hGuardado10", "hGuardado11", "hGuardado12"]
+    },
+    {
+      "path": "/ws/ciclo-actual",
+      "opc_objects": ["torreActual", "recetaActual"]
+    }
+  ]
+}
