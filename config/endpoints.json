@@ -14,5 +14,18 @@
       "path": "/ws/ciclo-actual",
       "opc_objects": ["torreActual", "recetaActual"]
     }
+  ],
+  "buffer_endpoints": [
+    {
+      "path": "/ws/buffer1",
+      "trigger_nodes": {
+        "inicio_ciclo": "inicioCiclo",
+        "fin_ciclo": "finCiclo",
+        "buscar": "buscarBuffer1",
+        "confirmacion": "confirmacionBuffer1"
+      },
+      "buffer_root": "buffer1",
+      "extra_nodes": ["recetaBuffer1", "torreBuffer1"]
+    }
   ]
 }
