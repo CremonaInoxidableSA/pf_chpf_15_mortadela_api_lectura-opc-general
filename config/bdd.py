@@ -10,11 +10,11 @@ from sqlalchemy.exc import OperationalError
 
 load_dotenv()
 
-db_user = os.getenv("MYSQL_USER")
-db_password = os.getenv("MYSQL_PASSWORD")
-db_host = os.getenv("MYSQL_HOST", "localhost")
-db_port = os.getenv("MYSQL_PORT", "3306")
-db_name = os.getenv("MYSQL_DATABASE")
+db_user = os.getenv("DB_USER")
+db_password = os.getenv("DB_PASSWORD")
+db_host = os.getenv("DB_HOST", "localhost")
+db_port = os.getenv("DB_PORT", "3306")
+db_name = os.getenv("DB_NAME")
 db_url = os.getenv("DATABASE_URL")
 
 DATABASE_URL = f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
