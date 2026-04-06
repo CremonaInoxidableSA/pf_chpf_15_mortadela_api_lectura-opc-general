@@ -45,17 +45,25 @@ buffer_configs: dict[str, dict] = {}
 for _buf in CONFIG.get("buffer_endpoints", []):
     buffer_configs[_buf["path"]] = {
         "manager": ConnectionManager(),
-        "trigger_nodes": _buf["trigger_nodes"],
         "buffer_root": _buf["buffer_root"],
         "extra_nodes": _buf.get("extra_nodes", []),
     }
 
+# ── Agregar triggers y buffers a ALL_OBJECT_NAMES ────────────────────
+# Los triggers son HARDCODEADOS: inicioCiclo, finCiclo, buscarBuffer{N}
+ALL_OBJECT_NAMES.update(["inicioCiclo", "finCiclo"])  # Triggers de ciclos (globales)
+
 for _buf_cfg in buffer_configs.values():
-    _tn = _buf_cfg["trigger_nodes"]
-    ALL_OBJECT_NAMES.update([
-        _tn["inicio_ciclo"], _tn["fin_ciclo"],
-        _buf_cfg["buffer_root"],
-    ])
+    buffer_root = _buf_cfg["buffer_root"]
+    ALL_OBJECT_NAMES.add(buffer_root)
     ALL_OBJECT_NAMES.update(_buf_cfg["extra_nodes"])
+    
+    # Extraer número de buffer y agregar su nodo buscar
+    buffer_num = buffer_root.replace("buffer", "")
+    buscar_node = f"buscarBuffer{buffer_num}"
+    ALL_OBJECT_NAMES.add(buscar_node)
+
+# ── Agregar recetaActual y torreActual para ciclos ────────────────────
+ALL_OBJECT_NAMES.update(["recetaActual", "torreActual"])
 
 buffer_cache: dict[str, dict] = {path: {} for path in buffer_configs}

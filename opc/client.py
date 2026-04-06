@@ -17,7 +17,7 @@ from config.settings import (
 from config.ws import ConnectionManager
 from opc.browser import find_objects_by_name
 from opc.handler import DataChangeHandler
-from opc.buffer_monitor import run_buffer_monitor
+from opc.buffer_monitor import run_buffer_monitor, run_cycle_monitor
 from opc.source_ws import run_source_ws
 
 
@@ -98,6 +98,15 @@ async def run_client():
                         logging.info("Fuente WS iniciada: %s → %s", source_url, path)
 
                 # ── Buffer monitors ──────────────────────────────────
+                # Ciclos (BD): monitor único para todos
+                if buffer_configs:
+                    task = asyncio.create_task(
+                        run_cycle_monitor(client, buffer_configs, obj_map)
+                    )
+                    worker_tasks.append(task)
+                    logging.info("Monitor de ciclos iniciado")
+
+                # Buffers (tiempo real): monitor por cada buffer
                 for buf_path, buf_cfg in buffer_configs.items():
                     task = asyncio.create_task(
                         run_buffer_monitor(client, buf_path, buf_cfg, obj_map)

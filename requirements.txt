@@ -2,3 +2,6 @@ uvicorn
 asyncua
 fastapi
 websockets
+sqlalchemy
+dotenv
+pymysql

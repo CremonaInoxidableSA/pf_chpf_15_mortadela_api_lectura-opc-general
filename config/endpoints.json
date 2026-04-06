@@ -18,14 +18,14 @@
   "buffer_endpoints": [
     {
       "path": "/ws/buffer1",
-      "trigger_nodes": {
-        "inicio_ciclo": "inicioCiclo",
-        "fin_ciclo": "finCiclo",
-        "buscar": "buscarBuffer1",
-        "confirmacion": "confirmacionBuffer1"
-      },
       "buffer_root": "buffer1",
-      "extra_nodes": ["recetaBuffer1", "torreBuffer1"]
+      "extra_nodes": ["recetaActual", "torreActual"]
+    },
+    {
+      "path": "/ws/buffer2",
+      "buffer_root": "buffer2",
+      "extra_nodes": ["recetaActual", "torreActual"]
     }
   ]
 }
+
