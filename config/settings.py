@@ -58,12 +58,21 @@ for _buf_cfg in buffer_configs.values():
     ALL_OBJECT_NAMES.add(buffer_root)
     ALL_OBJECT_NAMES.update(_buf_cfg["extra_nodes"])
     
-    # Extraer número de buffer y agregar su nodo buscar
+    # Extraer número de buffer y agregar su nodo buscar y limpiar
     buffer_num = buffer_root.replace("buffer", "")
     buscar_node = f"buscarBuffer{buffer_num}"
+    clear_node = _buf_cfg.get("clear_node")
+    
     ALL_OBJECT_NAMES.add(buscar_node)
+    if clear_node:
+        ALL_OBJECT_NAMES.add(clear_node)
 
 # ── Agregar recetaActual y torreActual para ciclos ────────────────────
-ALL_OBJECT_NAMES.update(["recetaActual", "torreActual"])
+ALL_OBJECT_NAMES.update(["recetaActual", "torreActual", "falloCiclos"])
 
 buffer_cache: dict[str, dict] = {path: {} for path in buffer_configs}
+
+# ── Cache de ciclos abiertos: buf_path → ciclo_id ──────────────────
+# Almacena el ID del ciclo actualmente abierto por cada buffer_path
+# Se actualiza cuando se abre un nuevo ciclo y se limpia cuando se cierra
+ciclo_cache: dict[str, int | None] = {path: None for path in buffer_configs}

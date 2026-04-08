@@ -19,12 +19,14 @@
     {
       "path": "/ws/buffer1",
       "buffer_root": "buffer1",
-      "extra_nodes": ["recetaActual", "torreActual"]
+      "extra_nodes": ["recetaActual", "torreActual"],
+      "clear_node": "limpiarBuffer1"
     },
     {
       "path": "/ws/buffer2",
       "buffer_root": "buffer2",
-      "extra_nodes": ["recetaActual", "torreActual"]
+      "extra_nodes": ["recetaActual", "torreActual"],
+      "clear_node": "limpiarBuffer2"
     }
   ]
 }

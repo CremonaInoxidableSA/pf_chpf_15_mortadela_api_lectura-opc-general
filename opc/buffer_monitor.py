@@ -4,11 +4,11 @@ from datetime import datetime
 
 from asyncua import Client, Node, ua
 
-from config.settings import PUBLISHING_INTERVAL_MS, SAMPLING_INTERVAL_MS, QUEUE_MAXSIZE, buffer_cache
+from config.settings import PUBLISHING_INTERVAL_MS, SAMPLING_INTERVAL_MS, QUEUE_MAXSIZE, buffer_cache, ciclo_cache
 from config.ws import ConnectionManager
 from opc.browser import find_objects_by_name, read_node_tree
 from opc.handler import DataChangeHandler
-from config.bdd import create_ciclo_sync, close_ciclo_sync, get_open_ciclo_sync
+from config.bdd import create_ciclo_sync, close_ciclo_sync, get_open_ciclo_sync, create_fallo_captura_sync
 
 
 # ============== MONITOR DE CICLOS (BD) ==============
@@ -59,7 +59,6 @@ async def run_cycle_monitor(
         return
 
     prev_values: dict[str, bool] = {}
-    current_ciclo_id: dict[str, int] = {}  # buf_path → id_ciclo abierto
 
     # Crear suscripción
     handler = DataChangeHandler(node_labels, node_to_queues)
@@ -94,7 +93,7 @@ async def run_cycle_monitor(
                                 id_torre = None
 
                             # ── Si hay ciclo anterior abierto, ciérralo ──
-                            old_ciclo_id = current_ciclo_id.get(buf_path)
+                            old_ciclo_id = ciclo_cache.get(buf_path)
                             if old_ciclo_id:
                                 logging.warning(
                                     "Ciclo anterior abierto sin cerrar (id=%s). Cerrando ahora.",
@@ -107,7 +106,7 @@ async def run_cycle_monitor(
                                 new_ciclo_id = create_ciclo_sync(
                                     datetime.now(), id_receta, id_torre
                                 )
-                                current_ciclo_id[buf_path] = new_ciclo_id
+                                ciclo_cache[buf_path] = new_ciclo_id
                                 logging.info(
                                     "InicioCiclo %s: ciclo_id=%s, receta=%s, torre=%s",
                                     buf_path, new_ciclo_id, id_receta, id_torre,
@@ -117,12 +116,12 @@ async def run_cycle_monitor(
 
                         elif event_type == "fin":
                             # ── Cerrar ciclo actual ──
-                            ciclo_id = current_ciclo_id.get(buf_path)
+                            ciclo_id = ciclo_cache.get(buf_path)
                             if ciclo_id:
                                 try:
                                     close_ciclo_sync(ciclo_id, datetime.now())
                                     logging.info("FinCiclo %s: ciclo_id=%s", buf_path, ciclo_id)
-                                    del current_ciclo_id[buf_path]
+                                    ciclo_cache[buf_path] = None
                                 except Exception as e:
                                     logging.error("Error cerrando ciclo: %s", e)
                             else:
@@ -276,3 +275,66 @@ async def run_buffer_monitor(
     """Función reemplazada por run_simple_buffer_monitor.
     Mantiene firma compatible."""
     await run_simple_buffer_monitor(client, buf_path, buf_cfg, obj_map)
+
+
+# ============== MONITOR DE FALLOS DE LECTURA ==============
+
+async def run_fallo_monitor(
+    client: Client,
+    obj_map: dict[str, Node],
+):
+    """Suscripción dedicada al nodo booleano 'falloCiclos'.
+    Cuando detecta flanco ascendente (false → true), registra un fallo en BD.
+    """
+    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+    
+    # Buscar el nodo falloCiclos
+    fallo_node = obj_map.get("falloCiclos")
+    if not fallo_node:
+        logging.error("Monitor de fallos: nodo 'falloCiclos' no encontrado")
+        return
+    
+    # Configurar suscripción
+    node_labels: dict[str, str] = {fallo_node.nodeid.to_string(): "falloCiclos"}
+    node_to_queues: dict[str, list[asyncio.Queue]] = {
+        fallo_node.nodeid.to_string(): [queue]
+    }
+    
+    prev_fallo_value = False
+    
+    handler = DataChangeHandler(node_labels, node_to_queues)
+    subscription = await client.create_subscription(PUBLISHING_INTERVAL_MS, handler)
+    await subscription.subscribe_data_change(
+        [fallo_node], queuesize=1, sampling_interval=SAMPLING_INTERVAL_MS
+    )
+    logging.info("Monitor de fallos activo: falloCiclos")
+    
+    try:
+        while True:
+            item = await queue.get()
+            try:
+                val = bool(item.get("value"))
+                
+                # Detectar flanco ascendente (false → true)
+                if val and not prev_fallo_value:
+                    logging.warning("Flanco ascendente falloCiclos detectado: registrando fallo en BD")
+                    try:
+                        create_fallo_captura_sync(datetime.now())
+                        logging.info("✓ Fallo de lectura registrado correctamente")
+                    except Exception as e:
+                        logging.error("✗ Error registrando fallo: %s", e)
+                
+                prev_fallo_value = val
+                
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.exception("Error en fallo monitor")
+            finally:
+                queue.task_done()
+    
+    finally:
+        try:
+            await subscription.delete()
+        except Exception:
+            pass

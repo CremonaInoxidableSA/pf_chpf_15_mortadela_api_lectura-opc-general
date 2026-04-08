@@ -125,7 +125,7 @@ def create_ciclo_sync(fecha_inicio, id_receta, id_torre):
     db = SessionLocal()
     try:
         query = text("""
-            INSERT INTO ciclos (fecha_inicio, id_receta, id_torre, estado, activo)
+            INSERT INTO ciclos (fecha_inicio, id_receta, id_torre, id_estado, activo)
             VALUES (:fecha_inicio, :id_receta, :id_torre, 1, 1)
         """)
         result = db.execute(query, {
@@ -147,7 +147,7 @@ def create_ciclo_sync(fecha_inicio, id_receta, id_torre):
 
 
 def close_ciclo_sync(id_ciclo, fecha_fin=None):
-    """Cierra un ciclo abierto escribiendo la fecha_fin, calculando tiempo_ciclo y estableciendo estado = 0."""
+    """Cierra un ciclo abierto escribiendo la fecha_fin, calculando tiempo_ciclo y estableciendo estado = FINALIZADO."""
     from datetime import datetime
     
     if fecha_fin is None:
@@ -160,7 +160,7 @@ def close_ciclo_sync(id_ciclo, fecha_fin=None):
         query = text("""
             UPDATE ciclos 
             SET fecha_fin = :fecha_fin, 
-                estado = 0,
+                id_estado = 1,
                 tiempo_ciclo = TIMESTAMPDIFF(SECOND, fecha_inicio, :fecha_fin)
             WHERE id_ciclo = :id_ciclo
         """)
@@ -193,7 +193,7 @@ def get_open_ciclo_sync():
     try:
         query = text("""
             SELECT * FROM ciclos 
-            WHERE estado = 1 
+            WHERE id_estado = 1 
             ORDER BY id_ciclo DESC 
             LIMIT 1
         """)
@@ -203,5 +203,37 @@ def get_open_ciclo_sync():
     except Exception as e:
         logging.error(f"✗ Error obteniendo ciclo abierto: {e}")
         return None
+    finally:
+        db.close()
+
+
+# ============== FUNCIONES PARA FALLOS DE LECTURA DE CICLOS ==============
+
+def create_fallo_captura_sync(fecha):
+    """Registra un nuevo fallo de captura de ciclos en la tabla fallocapturaciclos."""
+    from datetime import datetime
+    
+    if fecha is None:
+        fecha = datetime.now()
+    
+    SessionLocal = get_session_local()
+    db = SessionLocal()
+    try:
+        query = text("""
+            INSERT INTO fallocapturaciclos (fecha)
+            VALUES (:fecha)
+        """)
+        result = db.execute(query, {
+            "fecha": fecha
+        })
+        db.commit()
+        
+        new_id = result.lastrowid
+        logging.info(f"✓ Fallo de captura registrado: id={new_id}, fecha={fecha.isoformat()}")
+        return new_id
+    except Exception as e:
+        db.rollback()
+        logging.error(f"✗ Error registrando fallo de captura: {e}")
+        raise
     finally:
         db.close()
