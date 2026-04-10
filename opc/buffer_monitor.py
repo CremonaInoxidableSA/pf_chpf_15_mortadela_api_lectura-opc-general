@@ -221,9 +221,24 @@ async def run_simple_buffer_monitor(
                         buffer_data = await read_node_tree(buffer_root_node)
                         logging.debug("Buffer %s: Árbol leído correctamente. Keys: %s", buf_path, list(buffer_data.keys()))
                         
-                        # ── FILTRAR: excluir el nodo buscar (es un trigger, no dato) ──
-                        excludes = {buscar_name}
+                        # ── FILTRAR: excluir el nodo buscar y los nodos de ciclo que no deben salir por WS ──
+                        excludes = {buscar_name, "recetaActual", "rackActual"}
                         filtered_data = {k: v for k, v in buffer_data.items() if k not in excludes}
+                        
+                        # Añadir nodos extra configurados para este buffer (solo numeroEquipo aquí)
+                        for extra_node in buf_cfg.get("extra_nodes", []):
+                            if extra_node in ("recetaActual", "rackActual"):
+                                continue
+                            if extra_node in obj_map:
+                                try:
+                                    filtered_data[extra_node] = await obj_map[extra_node].read_value()
+                                except Exception as e:
+                                    logging.warning(
+                                        "Buffer %s: no se pudo leer nodo extra %s: %s",
+                                        buf_path,
+                                        extra_node,
+                                        e,
+                                    )
                         
                         logging.debug("Buffer %s: Datos filtrados (excluído: %s). Keys después filtro: %s", 
                                      buf_path, buscar_name, list(filtered_data.keys()))
