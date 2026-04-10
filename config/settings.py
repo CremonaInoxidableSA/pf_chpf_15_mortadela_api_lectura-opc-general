@@ -67,8 +67,8 @@ for _buf_cfg in buffer_configs.values():
     if clear_node:
         ALL_OBJECT_NAMES.add(clear_node)
 
-# ── Agregar recetaActual y torreActual para ciclos ────────────────────
-ALL_OBJECT_NAMES.update(["recetaActual", "torreActual", "falloCiclos"])
+# ── Agregar recetaActual y rackActual para ciclos ────────────────────
+ALL_OBJECT_NAMES.update(["recetaActual", "rackActual", "falloCiclos"])
 
 buffer_cache: dict[str, dict] = {path: {} for path in buffer_configs}
 

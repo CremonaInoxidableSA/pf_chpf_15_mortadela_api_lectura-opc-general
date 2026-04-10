@@ -117,7 +117,7 @@ def get_db():
 # Nota: La tabla 'ciclos' es gestionada por otra API. 
 # Estas funciones solo leen/escriben en la tabla existente (sin crear).
 
-def create_ciclo_sync(fecha_inicio, id_receta, id_torre):
+def create_ciclo_sync(fecha_inicio, id_receta, id_rack):
     """Crea un nuevo ciclo en la tabla ciclos (existente) y retorna el id_ciclo creado."""
     from datetime import datetime
     
@@ -125,18 +125,18 @@ def create_ciclo_sync(fecha_inicio, id_receta, id_torre):
     db = SessionLocal()
     try:
         query = text("""
-            INSERT INTO ciclos (fecha_inicio, id_receta, id_torre, id_estado, activo)
-            VALUES (:fecha_inicio, :id_receta, :id_torre, 1, 1)
+            INSERT INTO ciclos (fecha_inicio, id_receta, id_rack, id_estado, activo)
+            VALUES (:fecha_inicio, :id_receta, :id_rack, 1, 1)
         """)
         result = db.execute(query, {
             "fecha_inicio": fecha_inicio,
             "id_receta": id_receta,
-            "id_torre": id_torre
+            "id_rack": id_rack
         })
         db.commit()
         
         new_id = result.lastrowid
-        logging.info(f"✓ Ciclo creado: id={new_id}, receta={id_receta}, torre={id_torre}, activo=1")
+        logging.info(f"✓ Ciclo creado: id={new_id}, receta={id_receta}, rack={id_rack}, activo=1")
         return new_id
     except Exception as e:
         db.rollback()

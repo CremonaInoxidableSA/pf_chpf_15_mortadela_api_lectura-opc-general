@@ -19,7 +19,7 @@ async def run_cycle_monitor(
     obj_map: dict[str, Node],
 ):
     """Suscripción dedicada a inicioCiclo y finCiclo.
-    Crea/cierra ciclos en BD con receta y torre actual.
+    Crea/cierra ciclos en BD con receta y rack actual.
     
     buf_cfgs: dict de todos los buffers (para extraer config de ciclos)
     """
@@ -50,12 +50,12 @@ async def run_cycle_monitor(
         logging.error("No se encontraron nodos de ciclos")
         return
 
-    # Resolvamos nodos de receta y torre
+    # Resolvamos nodos de receta y rack
     receta_node = obj_map.get("recetaActual")
-    torre_node = obj_map.get("torreActual")
+    rack_node = obj_map.get("rackActual")
 
-    if not receta_node or not torre_node:
-        logging.error("No se encontraron nodos recetaActual o torreActual")
+    if not receta_node or not rack_node:
+        logging.error("No se encontraron nodos recetaActual o rackActual")
         return
 
     prev_values: dict[str, bool] = {}
@@ -83,14 +83,14 @@ async def run_cycle_monitor(
                         buf_path, event_type = parts
 
                         if event_type == "inicio":
-                            # ── Lectura de receta y torre ──
+                            # ── Lectura de receta y rack ──
                             try:
                                 id_receta = await receta_node.read_value()
-                                id_torre = await torre_node.read_value()
+                                id_rack = await rack_node.read_value()
                             except Exception as e:
-                                logging.warning("Error leyendo receta/torre: %s", e)
+                                logging.warning("Error leyendo receta/rack: %s", e)
                                 id_receta = None
-                                id_torre = None
+                                id_rack = None
 
                             # ── Si hay ciclo anterior abierto, ciérralo ──
                             old_ciclo_id = ciclo_cache.get(buf_path)
@@ -104,12 +104,12 @@ async def run_cycle_monitor(
                             # ── Crear nuevo ciclo en BD ──
                             try:
                                 new_ciclo_id = create_ciclo_sync(
-                                    datetime.now(), id_receta, id_torre
+                                    datetime.now(), id_receta, id_rack
                                 )
                                 ciclo_cache[buf_path] = new_ciclo_id
                                 logging.info(
-                                    "InicioCiclo %s: ciclo_id=%s, receta=%s, torre=%s",
-                                    buf_path, new_ciclo_id, id_receta, id_torre,
+                                    "InicioCiclo %s: ciclo_id=%s, receta=%s, rack=%s",
+                                    buf_path, new_ciclo_id, id_receta, id_rack,
                                 )
                             except Exception as e:
                                 logging.error("Error creando ciclo: %s", e)
