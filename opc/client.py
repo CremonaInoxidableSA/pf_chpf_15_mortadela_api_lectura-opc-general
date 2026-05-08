@@ -17,7 +17,7 @@ from config.settings import (
 from config.ws import ConnectionManager
 from opc.browser import find_objects_by_name
 from opc.handler import DataChangeHandler
-from opc.buffer_monitor import run_buffer_monitor, run_cycle_monitor, run_fallo_monitor
+from opc.buffer_monitor import run_buffer_monitor, run_cycle_monitor, run_fallo_monitor, run_pausa_monitor
 from opc.source_ws import run_source_ws
 
 
@@ -113,6 +113,14 @@ async def run_client():
                     )
                     worker_tasks.append(task)
                     logging.info("Monitor de fallos iniciado")
+
+                # Monitor de pausas: cuenta flancos estadoEquipo == 2
+                if "estadoEquipo" in obj_map:
+                    task = asyncio.create_task(
+                        run_pausa_monitor(client, obj_map)
+                    )
+                    worker_tasks.append(task)
+                    logging.info("Monitor de pausas iniciado")
 
                 # Buffers (tiempo real): monitor por cada buffer
                 for buf_path, buf_cfg in buffer_configs.items():

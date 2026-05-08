@@ -3,6 +3,7 @@ python -m venv venv
     Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 venv\Scripts\activate
 pip install -r requirements.txt
+pip install --upgrade -r requirements.txt
 
 uvicorn main:app --host 0.0.0.0 --port 8015 --reload
 

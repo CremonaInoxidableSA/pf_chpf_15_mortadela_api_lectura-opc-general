@@ -125,8 +125,8 @@ def create_ciclo_sync(fecha_inicio, id_receta, id_rack):
     db = SessionLocal()
     try:
         query = text("""
-            INSERT INTO ciclos (fecha_inicio, id_receta, id_rack, id_estado, activo)
-            VALUES (:fecha_inicio, :id_receta, :id_rack, 1, 1)
+            INSERT INTO ciclos (fecha_inicio, id_receta, id_rack, activo)
+            VALUES (:fecha_inicio, :id_receta, :id_rack, 1)
         """)
         result = db.execute(query, {
             "fecha_inicio": fecha_inicio,
@@ -146,8 +146,8 @@ def create_ciclo_sync(fecha_inicio, id_receta, id_rack):
         db.close()
 
 
-def close_ciclo_sync(id_ciclo, fecha_fin=None):
-    """Cierra un ciclo abierto escribiendo la fecha_fin, calculando tiempo_ciclo y estableciendo estado = FINALIZADO."""
+def close_ciclo_sync(id_ciclo, fecha_fin=None, tiempo_pausa=0):
+    """Cierra un ciclo abierto escribiendo la fecha_fin, calculando tiempo_total y estableciendo estado = FINALIZADO."""
     from datetime import datetime
     
     if fecha_fin is None:
@@ -156,26 +156,28 @@ def close_ciclo_sync(id_ciclo, fecha_fin=None):
     SessionLocal = get_session_local()
     db = SessionLocal()
     try:
-        # UPDATE que calcula tiempo_ciclo = TIMESTAMPDIFF(SECOND, fecha_inicio, fecha_fin)
+        # UPDATE que calcula tiempo_total = TIMESTAMPDIFF(SECOND, fecha_inicio, fecha_fin)
         query = text("""
             UPDATE ciclos 
             SET fecha_fin = :fecha_fin, 
-                id_estado = 1,
-                tiempo_ciclo = TIMESTAMPDIFF(SECOND, fecha_inicio, :fecha_fin)
+                tiempo_total = TIMESTAMPDIFF(SECOND, fecha_inicio, :fecha_fin),
+                tiempo_pausa = :tiempo_pausa,
+                tiempo_util = GREATEST(0, TIMESTAMPDIFF(SECOND, fecha_inicio, :fecha_fin) - :tiempo_pausa)
             WHERE id_ciclo = :id_ciclo
         """)
         result = db.execute(query, {
             "fecha_fin": fecha_fin,
-            "id_ciclo": id_ciclo
+            "id_ciclo": id_ciclo,
+            "tiempo_pausa": tiempo_pausa
         })
         db.commit()
         
         if result.rowcount > 0:
-            # Obtener el tiempo_ciclo calculado para logging
-            select_query = text("SELECT tiempo_ciclo FROM ciclos WHERE id_ciclo = :id_ciclo")
+            # Obtener el tiempo_total calculado para logging
+            select_query = text("SELECT tiempo_total FROM ciclos WHERE id_ciclo = :id_ciclo")
             select_result = db.execute(select_query, {"id_ciclo": id_ciclo}).fetchone()
-            tiempo_ciclo = select_result[0] if select_result else "?"
-            logging.info(f"✓ Ciclo cerrado: id={id_ciclo}, fin={fecha_fin.isoformat()}, tiempo_ciclo={tiempo_ciclo}s")
+            tiempo_total = select_result[0] if select_result else "?"
+            logging.info(f"✓ Ciclo cerrado: id={id_ciclo}, fin={fecha_fin.isoformat()}, tiempo_total={tiempo_total}s")
         else:
             logging.warning(f"✗ Ciclo no encontrado: id={id_ciclo}")
     except Exception as e:

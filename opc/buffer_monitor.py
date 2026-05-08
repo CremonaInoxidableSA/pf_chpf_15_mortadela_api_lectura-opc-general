@@ -10,6 +10,20 @@ from opc.browser import find_objects_by_name, read_node_tree
 from opc.handler import DataChangeHandler
 from config.bdd import create_ciclo_sync, close_ciclo_sync, get_open_ciclo_sync, create_fallo_captura_sync
 
+# Contador global de pausas acumuladas (segundos) y momento de inicio de la pausa activa
+pausa_counter: int = 0
+pausa_start: datetime | None = None
+
+
+def get_tiempo_pausa_actual() -> int:
+    """Retorna pausa_counter + los segundos de la pausa actualmente en curso (si la hay).
+    Usar justo antes de cerrar un ciclo para no perder el tramo activo.
+    """
+    extra = 0
+    if pausa_start is not None:
+        extra = int((datetime.now() - pausa_start).total_seconds())
+    return pausa_counter + extra
+
 
 # ============== MONITOR DE CICLOS (BD) ==============
 
@@ -23,6 +37,7 @@ async def run_cycle_monitor(
     
     buf_cfgs: dict de todos los buffers (para extraer config de ciclos)
     """
+    global pausa_counter, pausa_start
     queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
     node_labels: dict[str, str] = {}
     node_to_queues: dict[str, list[asyncio.Queue]] = {}
@@ -99,7 +114,22 @@ async def run_cycle_monitor(
                                     "Ciclo anterior abierto sin cerrar (id=%s). Cerrando ahora.",
                                     old_ciclo_id,
                                 )
-                                close_ciclo_sync(old_ciclo_id, datetime.now())
+                                close_ciclo_sync(old_ciclo_id, datetime.now(), get_tiempo_pausa_actual())
+
+                            # ── Resetear contador de pausas para el nuevo ciclo ──
+                            pausa_counter = 0
+                            pausa_start = None
+
+                            # ── Si estadoEquipo ya es 2, arrancar el contador de pausa ahora ──
+                            estado_node = obj_map.get("estadoEquipo")
+                            if estado_node:
+                                try:
+                                    estado_actual = int(await estado_node.read_value())
+                                    if estado_actual == 2:
+                                        pausa_start = datetime.now()
+                                        logging.info("InicioCiclo: estadoEquipo ya es 2, pausa iniciada desde el arranque")
+                                except Exception as e:
+                                    logging.warning("No se pudo leer estadoEquipo al iniciar ciclo: %s", e)
 
                             # ── Crear nuevo ciclo en BD ──
                             try:
@@ -119,9 +149,12 @@ async def run_cycle_monitor(
                             ciclo_id = ciclo_cache.get(buf_path)
                             if ciclo_id:
                                 try:
-                                    close_ciclo_sync(ciclo_id, datetime.now())
-                                    logging.info("FinCiclo %s: ciclo_id=%s", buf_path, ciclo_id)
+                                    tiempo_pausa_final = get_tiempo_pausa_actual()
+                                    close_ciclo_sync(ciclo_id, datetime.now(), tiempo_pausa_final)
+                                    logging.info("FinCiclo %s: ciclo_id=%s, tiempo_pausa=%ss", buf_path, ciclo_id, tiempo_pausa_final)
                                     ciclo_cache[buf_path] = None
+                                    pausa_counter = 0
+                                    pausa_start = None
                                 except Exception as e:
                                     logging.error("Error cerrando ciclo: %s", e)
                             else:
@@ -348,6 +381,76 @@ async def run_fallo_monitor(
             finally:
                 queue.task_done()
     
+    finally:
+        try:
+            await subscription.delete()
+        except Exception:
+            pass
+
+
+async def run_pausa_monitor(
+    client: Client,
+    obj_map: dict[str, Node],
+):
+    """Acumula los segundos que estadoEquipo == 2 (pausa activa).
+    Cuando el valor cambia a 2 registra el inicio; cuando sale de 2 suma
+    los segundos transcurridos a pausa_counter.
+    """
+    global pausa_counter, pausa_start
+
+    estado_node = obj_map.get("estadoEquipo")
+    if not estado_node:
+        logging.error("Monitor de pausas: nodo 'estadoEquipo' no encontrado")
+        return
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
+    node_labels: dict[str, str] = {estado_node.nodeid.to_string(): "estadoEquipo"}
+    node_to_queues: dict[str, list[asyncio.Queue]] = {
+        estado_node.nodeid.to_string(): [queue]
+    }
+
+    prev_estado_value: int = -1
+
+    handler = DataChangeHandler(node_labels, node_to_queues)
+    subscription = await client.create_subscription(PUBLISHING_INTERVAL_MS, handler)
+    await subscription.subscribe_data_change(
+        [estado_node], queuesize=1, sampling_interval=SAMPLING_INTERVAL_MS
+    )
+    logging.info("Monitor de pausas activo: estadoEquipo")
+
+    try:
+        while True:
+            item = await queue.get()
+            try:
+                try:
+                    val_int = int(item.get("value", -1))
+                except (TypeError, ValueError):
+                    val_int = -1
+
+                if val_int == 2 and prev_estado_value != 2:
+                    # Entrada en pausa: registrar momento de inicio
+                    pausa_start = datetime.now()
+                    logging.info("Pausa iniciada: estadoEquipo=2")
+
+                elif val_int != 2 and prev_estado_value == 2 and pausa_start is not None:
+                    # Salida de pausa: acumular segundos transcurridos
+                    segundos = int((datetime.now() - pausa_start).total_seconds())
+                    pausa_counter += segundos
+                    logging.info(
+                        "Pausa finalizada: +%ds (total en ciclo: %ds)", segundos, pausa_counter
+                    )
+                    pausa_start = None  # ya acumulado, limpiar referencia global
+                    # Sincronizar la variable global para que get_tiempo_pausa_actual() sea consistente
+
+                prev_estado_value = val_int
+
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logging.exception("Error en pausa monitor")
+            finally:
+                queue.task_done()
+
     finally:
         try:
             await subscription.delete()
