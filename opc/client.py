@@ -13,12 +13,14 @@ from config.settings import (
     endpoint_configs,
     endpoint_cache,
     buffer_configs,
+    ENABLE_CORRECCIONES,
 )
 from config.ws import ConnectionManager
 from opc.browser import find_objects_by_name
 from opc.handler import DataChangeHandler
 from opc.buffer_monitor import run_buffer_monitor, run_cycle_monitor, run_fallo_monitor, run_pausa_monitor
 from opc.source_ws import run_source_ws
+
 
 
 async def queue_worker(queue: asyncio.Queue, mgr: ConnectionManager, cache: dict):
@@ -82,6 +84,8 @@ async def run_client():
 
                 # ── Workers por endpoint ─────────────────────────────
                 for path, ep_cfg in endpoint_configs.items():
+                    if not ENABLE_CORRECCIONES and path == "/ws/correcciones":
+                        continue
                     task = asyncio.create_task(
                         queue_worker(ep_queues[path], ep_cfg["manager"], endpoint_cache[path])
                     )
@@ -89,6 +93,9 @@ async def run_client():
 
                 # ── Fuentes WebSocket externas ───────────────────────
                 for path, ep_cfg in endpoint_configs.items():
+                    if not ENABLE_CORRECCIONES and path == "/ws/correcciones":
+                        logging.info("Fuente WS deshabilitada (ENABLE_CORRECCIONES=False): %s", path)
+                        continue
                     source_url = ep_cfg.get("source_ws")
                     if source_url:
                         task = asyncio.create_task(

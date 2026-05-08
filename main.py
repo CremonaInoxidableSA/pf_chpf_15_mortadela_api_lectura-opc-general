@@ -6,7 +6,6 @@ from fastapi import FastAPI
 from opc.client import run_client
 from routes.websockets import register_endpoint_routes, register_buffer_routes
 
-
 # ── Ciclo de vida de la aplicación ──────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):

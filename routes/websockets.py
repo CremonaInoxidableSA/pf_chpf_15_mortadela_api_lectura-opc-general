@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from config.settings import endpoint_configs, endpoint_cache, buffer_configs, buffer_cache
+from config.settings import endpoint_configs, endpoint_cache, buffer_configs, buffer_cache, ENABLE_CORRECCIONES
 from config.ws import ConnectionManager
 
 
@@ -26,6 +26,9 @@ def register_endpoint_routes(app: FastAPI):
         return websocket_handler
 
     for ws_path, ep_cfg in endpoint_configs.items():
+        if not ENABLE_CORRECCIONES and ws_path == "/ws/correcciones":
+            logging.info("WebSocket deshabilitado (ENABLE_CORRECCIONES=False): %s", ws_path)
+            continue
         app.websocket(ws_path)(_make_ws_handler(ep_cfg["manager"], endpoint_cache[ws_path]))
         logging.info("WebSocket registrado: %s → objetos %s", ws_path, ep_cfg["opc_objects"])
 

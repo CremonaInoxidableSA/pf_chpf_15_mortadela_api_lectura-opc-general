@@ -1,14 +1,21 @@
 import json
 import logging
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from config.ws import ConnectionManager
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 logging.getLogger("asyncua").setLevel(logging.WARNING)
+
+# ── Feature flags desde .env ──────────────────────────────────
+ENABLE_CORRECCIONES: bool = os.getenv("ENABLE_CORRECCIONES", "false").lower() == "true"
 
 # ── Cargar configuración desde endpoints.json ───────────────────────
 CONFIG_PATH = Path(__file__).parent / "endpoints.json"
